@@ -1,6 +1,129 @@
-from flask import Flask
+from flask import Flask, jsonify, request
+import requests
+from sqlalchemy import create_engine, text
+import pandas as pd
+from Scripts.funcs import *
+
 app = Flask(__name__)
+app.config["DEBUG"]=True
 
 @app.route('/')
-def hello_world():
-    return 'Hello, World!'
+def hello():
+    welcome = """<h1><strong><center>Welcome to my first API</h1></strong></center><br>
+    <h3><center>Please, read the '/documentation' to access a basic database with values of demand at
+    electrical energy in Spain</h3></center>"""
+    return welcome
+
+@app.route('/documentation')
+def documentation():
+    title = "<h2><center><p padding-block:20px>Endlines</h2></center></p>"
+
+@app.route('/get_demand')
+def demand():
+    # Obtenemos los valores de la url:
+    start_date = str(request.args["start_date"])
+    end_date = str(request.args["end_date"])
+    plot_type = str(request.args["plot_type"])
+    orientation = str(request.args["bar_type"])
+
+    # La API de REE solo nos deja tomar 744 horas como límite, así que implementamos funciones para solventar la limitación.
+    # Creamos el dataframe con los datos obtenidos de la API:
+    start_date2 = pd.to_datetime(start_date)
+    end_date2 = pd.to_datetime(end_date)
+    limit_hours = 743
+    if total_hours(start_date2, end_date2) < limit_hours:
+        url = f"https://apidatos.ree.es/en/datos/demanda/evolucion?start_date={start_date}&end_date={end_date}&time_trunc=hour&geo_trunc=electric_system&geo_limit=peninsular&geo_ids=8741"
+        response = requests.get(url)
+        if response.status_code == 200:
+            data = response.json()["included"][0]["attributes"]["values"]
+            df = pd.DataFrame(data).drop("percentage", axis=1)
+            df["datetime"] = pd.to_datetime(df["datetime"]).dt.tz_convert(None)
+        else:
+            return f"Error de conexión: {response.status_code}"
+    else:
+        range_of_date = time_period(start_date2, end_date2, limit_hours=limit_hours)
+        df = pd.DataFrame()
+        for period in range_of_date:
+            url = f"https://apidatos.ree.es/en/datos/demanda/evolucion?start_date={period[0]}&end_date={period[1]}&time_trunc=hour&geo_trunc=electric_system&geo_limit=peninsular&geo_ids=8741"
+            response = requests.get(url)
+            if response.status_code == 200:
+                data = response.json()["included"][0]["attributes"]["values"]
+                df_aux = pd.DataFrame(data).drop("percentage", axis=1)
+                df = pd.concat([df, df_aux], ignore_index=True)
+                df = df.drop_duplicates()
+            else:
+                return f"Error de conexión: {response.status_code}"
+        df["datetime"] = pd.to_datetime(df["datetime"]).dt.tz_convert(None)
+
+    # Conectamos con la base de datos en Railway y nos traemos las fechas:
+    engine = create_engine("postgresql://postgres:893yWg53iQ4BeeP5xCyf@containers-us-west-96.railway.app:7144/railway")
+    with engine.connect() as connection:
+        table_db = pd.read_sql("SELECT datetime FROM table", connection)
+        connection.close()
+    table_db = table_db.sort_values(by= "datetime")
+
+    # Comparamos los datos obtenidos de REE con la base de datos en Railway para no generar duplicados. 
+    # Ploteamos la gráfica demandada después de actualizar los datos:
+    if len(table_db) == 0:
+        with engine.connect() as connection:
+            df.to_sql("table", connection)
+            connection.commit()
+            connection.close()
+        return plot_show(df= df, plot_type= plot_type, orientation= orientation)
+
+    elif len(table_db) != 0:
+        # Creamos un filtro para poder comparar dataframes y subir a Railway solo los que no estén duplicados:
+        table_bool = pd.Series(data=[range(len(df["datetime"]))], name= "filter")
+
+        for ind,new_date in enumerate(df["datetime"]):
+            if str(new_date) in str(table_db):
+                table_bool[ind] = True
+            elif str(new_date) not in str(table_db):
+                table_bool[ind] = False
+
+        df["duplicated"] = table_bool.values
+        add = df.drop(index= df[df["duplicated"] == True].index, axis=0).drop("duplicated", axis=1)
+        with engine.connect() as connection:
+            add.to_sql("table", connection)
+            connection.commit()
+            connection.close()
+        return plot_show(df= df, plot_type= plot_type, orientation= orientation)
+
+    else:
+        return "Cannot read the database in railway"
+   
+
+@app.route('/get_db_data')
+def get_data():
+    engine = create_engine("postgresql://postgres:893yWg53iQ4BeeP5xCyf@containers-us-west-96.railway.app:7144/railway")
+    with engine.connect() as connection:
+
+        # Descargamos los datos del database en Railway en base a los parámetros (opcionales):
+        if request.args["start_date"]:
+            start_date = str(request.args["start_date"])
+            if request.args["end_date"]:
+                end_date = str(request.args["end_date"])
+                table_db = pd.read_sql(f"SELECT * FROM table WHERE datetime BETWEEN {start_date} AND {end_date}", connection)
+            else:
+                table_db = pd.read_sql(f"SELECT * FROM table WHERE datetime >= {start_date}", connection)
+        elif request.args["end_date"]:
+            end_date = str(request.args["end_date"])
+            table_db = pd.read_sql(f"SELECT * FROM table WHERE datetime <= {end_date}", connection)
+        else:
+            table_db = pd.read_sql("SELECT * FROM table", connection)
+        connection.close()
+
+    return jsonify(table_db)
+
+
+@app.route('/wipe_data')
+def wipeout():
+    # Conectamos con la base de datos en Railway y eliminamos los datos de la tabla:
+    engine = create_engine("postgresql://postgres:893yWg53iQ4BeeP5xCyf@containers-us-west-96.railway.app:7144/railway")
+    with engine.connect() as connection:
+        connection.execute(text("TRUNCATE TABLE table"))
+        connection.commit()
+        connection.close()
+
+
+app.run()
