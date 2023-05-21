@@ -17,6 +17,18 @@ def hello():
 @app.route('/documentation')
 def documentation():
     title = "<h2><center><p padding-block:20px>Endlines</h2></center></p>"
+    docu = """ 
+    Endpoint plotting: /get_demand?start_date=2018-01-01T00:00&end_date=2018-01-02T23:59&plot_type='bar'&orientation='vertical'
+        start_date: The date you want to begin with. Format: YYYY-MM-DDTHH:mm 
+        end_date: The final date that close the range of data. Format: YYYY-MM-DDTHH:mm 
+        plot_type: Type of plot to show. Only can be 'bar' or 'line'.
+        orientation: Reverse the plot axes. You can chose 'vertical' or 'horizontal'.
+
+    Endpoint data-json: /get_db_data?start_date=2018-01-01T00:00&end_date=2018-01-02T23:59
+        start_date (optional): Same as before.
+        end_date (optional): Idem.
+    """
+    return title, docu
 
 @app.route('/get_demand')
 def demand():
@@ -118,12 +130,15 @@ def get_data():
 
 @app.route('/wipe_data')
 def wipeout():
-    # Conectamos con la base de datos en Railway y eliminamos los datos de la tabla:
-    engine = create_engine("postgresql://postgres:893yWg53iQ4BeeP5xCyf@containers-us-west-96.railway.app:7144/railway")
-    with engine.connect() as connection:
-        connection.execute(text("TRUNCATE TABLE table"))
-        connection.commit()
-        connection.close()
+    if request.args["secret"]:
+        code = int(request.args["secret"])
+        if code == 123:
+            # Conectamos con la base de datos en Railway y eliminamos los datos de la tabla:
+            engine = create_engine("postgresql://postgres:893yWg53iQ4BeeP5xCyf@containers-us-west-96.railway.app:7144/railway")
+            with engine.connect() as connection:
+                connection.execute(text("TRUNCATE TABLE table"))
+                connection.commit()
+                connection.close()
 
 
 app.run()
