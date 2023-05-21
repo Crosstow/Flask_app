@@ -68,17 +68,19 @@ def demand():
         df["datetime"] = pd.to_datetime(df["datetime"]).dt.tz_convert(None)
 
     # Conectamos con la base de datos en Railway y nos traemos las fechas:
-    engine = create_engine("postgresql://postgres:893yWg53iQ4BeeP5xCyf@containers-us-west-96.railway.app:7144/railway")
+    engine = create_engine("postgresql://postgres:PLi33GtM5p0iuKmFQEkw@containers-us-west-76.railway.app:7787/railway")
     with engine.connect() as connection:
-        table_db = pd.read_sql("SELECT datetime FROM table", connection)
+        table_db = pd.read_sql("SELECT datetime FROM reedb", connection)
         connection.close()
+    table_db["datetime"] = pd.to_datetime(table_db["datetime"]).dt.tz_convert(None)
     table_db = table_db.sort_values(by= "datetime")
 
     # Comparamos los datos obtenidos de REE con la base de datos en Railway para no generar duplicados. 
     # Ploteamos la gráfica demandada después de actualizar los datos:
     if len(table_db) == 0:
         with engine.connect() as connection:
-            df.to_sql("table", connection)
+            df = df.to_string(columns= "datetime")
+            df.to_sql("reedb", connection)
             connection.commit()
             connection.close()
         return plot_show(df= df, plot_type= plot_type, orientation= orientation)
@@ -96,7 +98,8 @@ def demand():
         df["duplicated"] = table_bool.values
         add = df.drop(index= df[df["duplicated"] == True].index, axis=0).drop("duplicated", axis=1)
         with engine.connect() as connection:
-            add.to_sql("table", connection)
+            add = add.to_string(columns= "datetime")
+            add.to_sql("reedb", connection)
             connection.commit()
             connection.close()
         return plot_show(df= df, plot_type= plot_type, orientation= orientation)
@@ -107,7 +110,7 @@ def demand():
 
 @app.route('/get_db_data')
 def get_data():
-    engine = create_engine("postgresql://postgres:893yWg53iQ4BeeP5xCyf@containers-us-west-96.railway.app:7144/railway")
+    engine = create_engine("postgresql://postgres:PLi33GtM5p0iuKmFQEkw@containers-us-west-76.railway.app:7787/railway")
     with engine.connect() as connection:
 
         # Descargamos los datos del database en Railway en base a los parámetros (opcionales):
@@ -115,14 +118,14 @@ def get_data():
             start_date = str(request.args["start_date"])
             if request.args["end_date"]:
                 end_date = str(request.args["end_date"])
-                table_db = pd.read_sql(f"SELECT * FROM table WHERE datetime BETWEEN {start_date} AND {end_date}", connection)
+                table_db = pd.read_sql(f"SELECT * FROM reedb WHERE datetime BETWEEN {start_date} AND {end_date}", connection)
             else:
-                table_db = pd.read_sql(f"SELECT * FROM table WHERE datetime >= {start_date}", connection)
+                table_db = pd.read_sql(f"SELECT * FROM reedb WHERE datetime >= {start_date}", connection)
         elif request.args["end_date"]:
             end_date = str(request.args["end_date"])
-            table_db = pd.read_sql(f"SELECT * FROM table WHERE datetime <= {end_date}", connection)
+            table_db = pd.read_sql(f"SELECT * FROM reedb WHERE datetime <= {end_date}", connection)
         else:
-            table_db = pd.read_sql("SELECT * FROM table", connection)
+            table_db = pd.read_sql("SELECT * FROM reedb", connection)
         connection.close()
 
     return jsonify(table_db)
@@ -134,9 +137,9 @@ def wipeout():
         code = int(request.args["secret"])
         if code == 123:
             # Conectamos con la base de datos en Railway y eliminamos los datos de la tabla:
-            engine = create_engine("postgresql://postgres:893yWg53iQ4BeeP5xCyf@containers-us-west-96.railway.app:7144/railway")
+            engine = create_engine("postgresql://postgres:PLi33GtM5p0iuKmFQEkw@containers-us-west-76.railway.app:7787/railway")
             with engine.connect() as connection:
-                connection.execute(text("TRUNCATE TABLE table"))
+                connection.execute(text("TRUNCATE TABLE reedb"))
                 connection.commit()
                 connection.close()
 
