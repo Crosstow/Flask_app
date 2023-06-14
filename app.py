@@ -16,19 +16,18 @@ def hello():
 
 @app.route('/documentation')
 def documentation():
-    title = "<h2><center><p padding-block:20px>Endlines</h2></center></p>"
-    docu = """ 
-    Endpoint plotting: /get_demand?start_date=2018-01-01T00:00&end_date=2018-01-02T23:59&plot_type='bar'&orientation='vertical'
-        start_date: The date you want to begin with. Format: YYYY-MM-DDTHH:mm 
-        end_date: The final date that close the range of data. Format: YYYY-MM-DDTHH:mm 
-        plot_type: Type of plot to show. Only can be 'bar' or 'line'.
-        orientation: Reverse the plot axes. You can chose 'vertical' or 'horizontal'.
+    title = """<h2><center><p padding-block:20px>Endlines</h2></center></p><br><br>
+    Endpoint plotting: <strong>/get_demand?start_date=2018-01-01T00:00&end_date=2018-01-02T23:59&plot_type='bar'&orientation='vertical' </strong><br>
+        start_date: The date you want to begin with. Format: YYYY-MM-DDTHH:mm <br>
+        end_date: The final date that close the range of data. Format: YYYY-MM-DDTHH:mm <br>
+        plot_type: Type of plot to show. Only can be 'bar' or 'line'. <br>
+        orientation: Reverse the plot axes. You can chose 'vertical' or 'horizontal'. <br><br>
 
-    Endpoint data-json: /get_db_data?start_date=2018-01-01T00:00&end_date=2018-01-02T23:59
-        start_date (optional): Same as before.
-        end_date (optional): Idem.
+    Endpoint data-json: <strong>/get_db_data?start_date=2018-01-01T00:00&end_date=2018-01-02T23:59 </strong><br>
+        start_date (optional): Same as before. <br>
+        end_date (optional): Idem. <br>
     """
-    return title, docu
+    return title
 
 @app.route('/get_demand')
 def demand():
@@ -36,7 +35,7 @@ def demand():
     start_date = str(request.args["start_date"])
     end_date = str(request.args["end_date"])
     plot_type = str(request.args["plot_type"])
-    orientation = str(request.args["bar_type"])
+    orientation = str(request.args["orientation"])
 
     # La API de REE solo nos deja tomar 744 horas como límite, así que implementamos funciones para solventar la limitación.
     # Creamos el dataframe con los datos obtenidos de la API:
@@ -66,26 +65,23 @@ def demand():
             else:
                 return f"Error de conexión: {response.status_code}"
         df["datetime"] = pd.to_datetime(df["datetime"]).dt.tz_convert(None)
-
-    # Conectamos con la base de datos en Railway y nos traemos las fechas:
+    
+    # Conectamos con la base de datos en Railway:
     engine = create_engine("postgresql://postgres:EPZf3vSIXhtWAiaTyD8l@containers-us-west-184.railway.app:5885/railway")
-    with engine.connect() as connection:
-        table_db = pd.read_sql("SELECT datetime FROM reedb", connection)
-        connection.close()
-    table_db["datetime"] = pd.to_datetime(table_db["datetime"]).dt.tz_convert(None)
-    table_db = table_db.sort_values(by= "datetime")
+    table = "reedb"
+    column = "datetime"
 
     # Comparamos los datos obtenidos de REE con la base de datos en Railway para no generar duplicados. 
     # Ploteamos la gráfica demandada después de actualizar los datos:
-    if len(table_db) == 0:
+    if data_is_empty(table, column, engine) == True:
         with engine.connect() as connection:
-            df = df.to_string(columns= "datetime")
-            df.to_sql("reedb", connection)
+            df = df.to_string(columns= column)
+            df.to_sql(table, connection)
             connection.commit()
             connection.close()
         return plot_show(df= df, plot_type= plot_type, orientation= orientation)
 
-    elif len(table_db) != 0:
+    elif data_is_empty(table, column, engine) == False:
         # Creamos un filtro para poder comparar dataframes y subir a Railway solo los que no estén duplicados:
         table_bool = pd.Series(data=[range(len(df["datetime"]))], name= "filter")
 
@@ -99,7 +95,7 @@ def demand():
         add = df.drop(index= df[df["duplicated"] == True].index, axis=0).drop("duplicated", axis=1)
         with engine.connect() as connection:
             add = add.to_string(columns= "datetime")
-            add.to_sql("reedb", connection)
+            add.to_sql(table, connection)
             connection.commit()
             connection.close()
         return plot_show(df= df, plot_type= plot_type, orientation= orientation)
@@ -111,37 +107,43 @@ def demand():
 @app.route('/get_db_data')
 def get_data():
     engine = create_engine("postgresql://postgres:EPZf3vSIXhtWAiaTyD8l@containers-us-west-184.railway.app:5885/railway")
-    with engine.connect() as connection:
+    table = "reedb"
+    column = "datetime"
+    if data_is_empty(table, column, engine) == True:
+        return "There is no data to return"
+    else:
+        with engine.connect() as connection:
 
-        # Descargamos los datos del database en Railway en base a los parámetros (opcionales):
-        if request.args["start_date"]:
-            start_date = str(request.args["start_date"])
-            if request.args["end_date"]:
+            # Descargamos los datos del database en Railway en base a los parámetros (opcionales):
+            if "start_date" in request.args:
+                start_date = str(request.args["start_date"])
+                if "end_date" in request.args:
+                    end_date = str(request.args["end_date"])
+                    table_db = pd.read_sql(f"SELECT * FROM {table} WHERE {column} BETWEEN {start_date} AND {end_date}", connection)
+                else:
+                    table_db = pd.read_sql(f"SELECT * FROM {table} WHERE {column} >= {start_date}", connection)
+            elif "end_date" in request.args:
                 end_date = str(request.args["end_date"])
-                table_db = pd.read_sql(f"SELECT * FROM reedb WHERE datetime BETWEEN {start_date} AND {end_date}", connection)
+                table_db = pd.read_sql(f"SELECT * FROM {table} WHERE {column} <= {end_date}", connection)
             else:
-                table_db = pd.read_sql(f"SELECT * FROM reedb WHERE datetime >= {start_date}", connection)
-        elif request.args["end_date"]:
-            end_date = str(request.args["end_date"])
-            table_db = pd.read_sql(f"SELECT * FROM reedb WHERE datetime <= {end_date}", connection)
-        else:
-            table_db = pd.read_sql("SELECT * FROM reedb", connection)
-        connection.close()
+                table_db = pd.read_sql(f"SELECT * FROM {table}", connection)
+            connection.close()
 
-    return jsonify(table_db)
+        return jsonify(table_db)
 
 
 @app.route('/wipe_data')
 def wipeout():
-    if request.args["secret"]:
+    if "secret" in request.args:
         code = int(request.args["secret"])
         if code == 123:
             # Conectamos con la base de datos en Railway y eliminamos los datos de la tabla:
             engine = create_engine("postgresql://postgres:EPZf3vSIXhtWAiaTyD8l@containers-us-west-184.railway.app:5885/railway")
+            table = "reedb"
             with engine.connect() as connection:
-                connection.execute(text("TRUNCATE TABLE reedb"))
+                connection.execute(text(f"TRUNCATE TABLE {table}"))
                 connection.commit()
                 connection.close()
 
-
-app.run()
+if __name__ == '__main__':
+    app.run()

@@ -1,10 +1,19 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sqlalchemy import create_engine
+
+def data_is_empty (table, column, engine):
+    with engine.connect() as connection:
+        result = connection.execute(f"SELECT COUNT(*) FROM {table} WHERE {column} IS NOT NULL")
+        count = result.scalar()
+    return count == 0
 
 def total_hours (start_date, end_date):
     delta = end_date - start_date
     return int((delta.days*24) + (delta.seconds/3600))
 
 def time_period (start_date, end_date, limit_hours= 743):
-    import numpy as np
     result = []
     hours = total_hours(start_date, end_date)
     periods = int(np.ceil(hours / limit_hours))
@@ -21,7 +30,6 @@ def time_period (start_date, end_date, limit_hours= 743):
     return result
 
 def plot_show(df, plot_type, orientation= "vertical"):
-    import matplotlib.pyplot as plt
     fig = plt.figure(figsize=(10,7))
     plt.xticks(rotation= 45);
 
